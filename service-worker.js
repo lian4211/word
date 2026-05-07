@@ -1,8 +1,9 @@
 const CACHE_NAME = 'word-learner-v1';
+const basePath = '/word';
 const urlsToCache = [
-    '/',
-    '/index.html',
-    '/manifest.json'
+    `${basePath}/`,
+    `${basePath}/index.html`,
+    `${basePath}/manifest.json`
 ];
 
 self.addEventListener('install', event => {
