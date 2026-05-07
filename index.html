@@ -21,12 +21,16 @@
 
         <!-- 首页 -->
         <div id="home-page" class="page">
-            <!-- 列表选择 -->
+            <!-- 列表选择与管理 -->
             <div class="mb-6">
                 <label class="block text-lg font-medium mb-2">选择单词列表</label>
-                <select id="list-select" class="w-full p-3 border border-gray-300 rounded-lg text-lg">
-                    <option value="">暂无列表</option>
-                </select>
+                <div class="flex gap-2">
+                    <select id="list-select" class="flex-1 p-3 border border-gray-300 rounded-lg text-lg">
+                        <option value="">暂无列表</option>
+                    </select>
+                    <button id="edit-list-btn" class="px-3 bg-yellow-500 text-white rounded-lg" title="修改列表名称">✏️</button>
+                    <button id="delete-list-btn" class="px-3 bg-red-500 text-white rounded-lg" title="删除列表">🗑️</button>
+                </div>
             </div>
 
             <button id="new-list-btn" class="w-full bg-blue-600 text-white py-3 rounded-lg text-lg mb-8">
@@ -55,6 +59,10 @@
                     <span class="text-4xl mb-2">🔊</span>
                     <span class="text-lg">语音设置</span>
                 </button>
+                <button class="bg-gray-500 text-white p-6 rounded-xl flex flex-col items-center" onclick="goToPage('word-list')">
+                    <span class="text-4xl mb-2">📋</span>
+                    <span class="text-lg">管理单词</span>
+                </button>
                 <button class="bg-gray-500 text-white p-6 rounded-xl flex flex-col items-center" onclick="exportData()">
                     <span class="text-4xl mb-2">💾</span>
                     <span class="text-lg">导出数据</span>
@@ -69,6 +77,7 @@
 
         <!-- 添加单词页面 -->
         <div id="add-word-page" class="page hidden">
+            <p id="add-word-count" class="text-center text-lg text-gray-600 mb-4"></p>
             <div class="space-y-4">
                 <div>
                     <label class="block text-lg font-medium mb-2">英文单词</label>
@@ -82,6 +91,12 @@
                     添加单词
                 </button>
             </div>
+        </div>
+
+        <!-- 单词列表管理页面 -->
+        <div id="word-list-page" class="page hidden">
+            <p id="word-list-count" class="text-center text-lg text-gray-600 mb-4"></p>
+            <div id="word-list-container" class="space-y-2"></div>
         </div>
 
         <!-- 英译汉页面 -->
@@ -211,6 +226,10 @@
                     { text: '创建', onClick: () => {
                         const name = document.getElementById('new-list-name').value.trim();
                         if (!name) return;
+                        if (data.lists.some(l => l.name === name)) {
+                            showToast('列表名称已存在');
+                            return;
+                        }
                         const newList = {
                             id: data.nextId++,
                             name: name,
@@ -228,6 +247,54 @@
             );
         });
 
+        // 修改列表名称
+        document.getElementById('edit-list-btn').addEventListener('click', () => {
+            if (!currentList) {
+                showToast('请先选择一个列表');
+                return;
+            }
+            showModal('修改列表名称', 
+                `<input type="text" id="edit-list-name" class="w-full p-2 border rounded-lg" value="${currentList.name}">`,
+                [
+                    { text: '取消', onClick: hideModal },
+                    { text: '保存', onClick: () => {
+                        const newName = document.getElementById('edit-list-name').value.trim();
+                        if (!newName) return;
+                        if (data.lists.some(l => l.name === newName && l.id !== currentList.id)) {
+                            showToast('列表名称已存在');
+                            return;
+                        }
+                        currentList.name = newName;
+                        saveData();
+                        refreshListSelect();
+                        hideModal();
+                        showToast('列表名称已修改');
+                    }}
+                ]
+            );
+        });
+
+        // 删除列表
+        document.getElementById('delete-list-btn').addEventListener('click', () => {
+            if (!currentList) {
+                showToast('请先选择一个列表');
+                return;
+            }
+            showModal('确认删除', 
+                `确定要删除列表"${currentList.name}"吗？\n所有单词和错题数据将永久丢失！`,
+                [
+                    { text: '取消', onClick: hideModal },
+                    { text: '删除', onClick: () => {
+                        data.lists = data.lists.filter(l => l.id !== currentList.id);
+                        saveData();
+                        refreshListSelect();
+                        hideModal();
+                        showToast('列表已删除');
+                    }}
+                ]
+            );
+        });
+
         // 列表选择变化
         document.getElementById('list-select').addEventListener('change', (e) => {
             const id = parseInt(e.target.value);
@@ -240,6 +307,13 @@
             document.getElementById(`${pageName}-page`).classList.remove('hidden');
             document.getElementById('back-btn').classList.remove('hidden');
             document.getElementById('page-title').textContent = getPageTitle(pageName);
+            
+            // 页面加载时更新单词数
+            if (pageName === 'add-word') {
+                updateAddWordCount();
+            } else if (pageName === 'word-list') {
+                renderWordList();
+            }
         }
 
         function goHome() {
@@ -252,6 +326,7 @@
         function getPageTitle(pageName) {
             const titles = {
                 'add-word': '添加单词',
+                'word-list': '单词列表',
                 'ec': '英译汉',
                 'ce': '汉译英',
                 'mistakes': '错题库',
@@ -261,6 +336,15 @@
         }
 
         document.getElementById('back-btn').addEventListener('click', goHome);
+
+        // 更新添加单词页面的单词数
+        function updateAddWordCount() {
+            if (currentList) {
+                document.getElementById('add-word-count').textContent = `当前列表已有 ${currentList.words.length} 个单词`;
+            } else {
+                document.getElementById('add-word-count').textContent = '请先选择一个列表';
+            }
+        }
 
         // 添加单词
         document.getElementById('add-word-btn').addEventListener('click', () => {
@@ -277,10 +361,97 @@
             currentList.words.push({ english, chinese });
             saveData();
             refreshListSelect();
+            updateAddWordCount();
             document.getElementById('english-input').value = '';
             document.getElementById('chinese-input').value = '';
             showToast('单词添加成功');
         });
+
+        // 单词列表管理
+        function renderWordList() {
+            const container = document.getElementById('word-list-container');
+            const countEl = document.getElementById('word-list-count');
+            
+            if (!currentList || currentList.words.length === 0) {
+                countEl.textContent = '当前列表没有单词';
+                container.innerHTML = '';
+                return;
+            }
+
+            countEl.textContent = `共 ${currentList.words.length} 个单词`;
+            container.innerHTML = currentList.words.map((word, index) => `
+                <div class="bg-white p-3 rounded-lg border border-gray-200 flex justify-between items-center">
+                    <div>
+                        <p class="text-lg">${word.english} - ${word.chinese}</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="px-2 py-1 bg-yellow-500 text-white rounded" onclick="editWord(${index})">修改</button>
+                        <button class="px-2 py-1 bg-red-500 text-white rounded" onclick="deleteWord(${index})">删除</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 修改单词
+        function editWord(index) {
+            const word = currentList.words[index];
+            showModal('修改单词', 
+                `<div class="space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium mb-1">英文单词</label>
+                        <input type="text" id="edit-english" class="w-full p-2 border rounded-lg" value="${word.english}">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-1">中文含义</label>
+                        <input type="text" id="edit-chinese" class="w-full p-2 border rounded-lg" value="${word.chinese}">
+                    </div>
+                </div>`,
+                [
+                    { text: '取消', onClick: hideModal },
+                    { text: '保存', onClick: () => {
+                        const newEnglish = document.getElementById('edit-english').value.trim();
+                        const newChinese = document.getElementById('edit-chinese').value.trim();
+                        if (!newEnglish || !newChinese) {
+                            showToast('请填写完整信息');
+                            return;
+                        }
+                        currentList.words[index].english = newEnglish;
+                        currentList.words[index].chinese = newChinese;
+                        saveData();
+                        renderWordList();
+                        refreshListSelect();
+                        hideModal();
+                        showToast('单词已修改');
+                    }}
+                ]
+            );
+        }
+
+        // 删除单词
+        function deleteWord(index) {
+            const word = currentList.words[index];
+            showModal('确认删除', 
+                `确定要删除单词"${word.english} - ${word.chinese}"吗？`,
+                [
+                    { text: '取消', onClick: hideModal },
+                    { text: '删除', onClick: () => {
+                        currentList.words.splice(index, 1);
+                        // 同时从错题库中删除该单词
+                        currentList.ecMistakes = currentList.ecMistakes.filter(m => 
+                            !(m.english === word.english && m.chinese === word.chinese)
+                        );
+                        currentList.ceMistakes = currentList.ceMistakes.filter(m => 
+                            !(m.english === word.english && m.chinese === word.chinese)
+                        );
+                        saveData();
+                        renderWordList();
+                        refreshListSelect();
+                        hideModal();
+                        showToast('单词已删除');
+                    }}
+                ]
+            );
+        }
 
         // 英译汉测试
         let ecState = {
