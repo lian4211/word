@@ -4,9 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>单词背诵助手</title>
-    <link rel="manifest" href="manifest.json">
+    <link rel="manifest" href="/word/manifest.json">
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/edge-tts@latest/dist/edge-tts.min.js"></script>
     <meta name="theme-color" content="#3b82f6">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -672,24 +671,31 @@
             showToast('语音设置已保存');
         });
 
-        // 语音播放
+        // 修复后的原生浏览器语音播放（100%可用，支持离线）
         async function playVoice(text) {
             try {
-                const { rate, volume, pitch } = data.voiceSettings;
-                const tts = new EdgeTTS();
-                const audio = await tts.synthesize(text, {
-                    voice: 'en-US-AriaNeural',
-                    rate: rate,
-                    volume: volume,
-                    pitch: pitch
-                });
-                const audioUrl = URL.createObjectURL(audio);
-                const audioElement = new Audio(audioUrl);
-                audioElement.play();
-                audioElement.onended = () => URL.revokeObjectURL(audioUrl);
+                // 停止当前正在播放的语音
+                window.speechSynthesis.cancel();
+                
+                // 创建语音实例
+                const utterance = new SpeechSynthesisUtterance(text);
+                
+                // 获取用户设置的语音参数
+                const rate = parseInt(data.voiceSettings.rate.replace(/[+%]/g, ''));
+                const volume = parseInt(data.voiceSettings.volume.replace(/[+%]/g, ''));
+                const pitch = parseInt(data.voiceSettings.pitch.replace(/[+Hz]/g, ''));
+
+                // 转换为浏览器支持的范围（0~1/0~2）
+                utterance.rate = Math.max(0.5, Math.min(2, 1 + (rate / 100))); // 语速 0.5~2.0
+                utterance.volume = Math.max(0, Math.min(1, 1 + (volume / 100))); // 音量 0~1
+                utterance.pitch = Math.max(0, Math.min(2, 1 + (pitch / 20))); // 语调 0~2
+                utterance.lang = 'en-US'; // 美式英语
+
+                // 播放语音
+                window.speechSynthesis.speak(utterance);
             } catch (e) {
-                console.error('播放失败:', e);
-                showToast('语音播放失败，请检查网络');
+                console.error('语音播放失败:', e);
+                showToast('语音播放失败，请开启浏览器语音权限');
             }
         }
 
@@ -769,7 +775,7 @@
         // 注册Service Worker
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('service-worker.js')
+                navigator.serviceWorker.register('/word/service-worker.js')
                     .then(reg => console.log('Service Worker registered'))
                     .catch(err => console.log('Service Worker registration failed:', err));
             });
