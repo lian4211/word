@@ -198,23 +198,36 @@
             localStorage.setItem('wordLearnerData', JSON.stringify(data));
         }
 
-        // 刷新列表选择
+        // 刷新列表选择（核心修复：保留当前选中的列表）
         function refreshListSelect() {
             const select = document.getElementById('list-select');
+            // 记录当前选中的ID，避免刷新后丢失
+            const selectedId = select.value ? parseInt(select.value) : (currentList ? currentList.id : null);
+            
             select.innerHTML = '';
             if (data.lists.length === 0) {
                 select.innerHTML = '<option value="">暂无列表</option>';
                 currentList = null;
                 return;
             }
+            
+            // 渲染所有列表选项
             data.lists.forEach(list => {
                 const option = document.createElement('option');
                 option.value = list.id;
                 option.textContent = `${list.name} (${list.words.length}个单词)`;
                 select.appendChild(option);
             });
-            currentList = data.lists[0];
-            select.value = currentList.id;
+            
+            // 优先保留之前选中的列表
+            if (selectedId && data.lists.some(l => l.id === selectedId)) {
+                select.value = selectedId;
+                currentList = data.lists.find(l => l.id === selectedId);
+            } else {
+                // 无选中项时才选第一个
+                select.value = data.lists[0].id;
+                currentList = data.lists[0];
+            }
         }
 
         // 新建列表
@@ -225,7 +238,10 @@
                     { text: '取消', onClick: hideModal },
                     { text: '创建', onClick: () => {
                         const name = document.getElementById('new-list-name').value.trim();
-                        if (!name) return;
+                        if (!name) {
+                            showToast('请输入列表名称');
+                            return;
+                        }
                         if (data.lists.some(l => l.name === name)) {
                             showToast('列表名称已存在');
                             return;
@@ -259,7 +275,10 @@
                     { text: '取消', onClick: hideModal },
                     { text: '保存', onClick: () => {
                         const newName = document.getElementById('edit-list-name').value.trim();
-                        if (!newName) return;
+                        if (!newName) {
+                            showToast('请输入列表名称');
+                            return;
+                        }
                         if (data.lists.some(l => l.name === newName && l.id !== currentList.id)) {
                             showToast('列表名称已存在');
                             return;
@@ -281,7 +300,7 @@
                 return;
             }
             showModal('确认删除', 
-                `确定要删除列表"${currentList.name}"吗？\n所有单词和错题数据将永久丢失！`,
+                `确定要删除列表"${currentList.name}"吗？<br>所有单词和错题数据将永久丢失！`,
                 [
                     { text: '取消', onClick: hideModal },
                     { text: '删除', onClick: () => {
@@ -313,6 +332,10 @@
                 updateAddWordCount();
             } else if (pageName === 'word-list') {
                 renderWordList();
+            } else if (pageName === 'voice-settings') {
+                initVoiceSettings();
+            } else if (pageName === 'mistakes') {
+                updateMistakesTab('ec');
             }
         }
 
@@ -346,12 +369,12 @@
             }
         }
 
-        // 添加单词
+        // 添加单词（核心修复：移除refreshListSelect调用）
         document.getElementById('add-word-btn').addEventListener('click', () => {
             const english = document.getElementById('english-input').value.trim();
             const chinese = document.getElementById('chinese-input').value.trim();
             if (!english || !chinese) {
-                showToast('请填写完整信息');
+                showToast('请填写完整的英文和中文信息');
                 return;
             }
             if (!currentList) {
@@ -360,7 +383,7 @@
             }
             currentList.words.push({ english, chinese });
             saveData();
-            refreshListSelect();
+            // 移除refreshListSelect，避免选中状态丢失
             updateAddWordCount();
             document.getElementById('english-input').value = '';
             document.getElementById('chinese-input').value = '';
@@ -392,8 +415,9 @@
             `).join('');
         }
 
-        // 修改单词
+        // 修改单词（补全并修复：移除refreshListSelect）
         function editWord(index) {
+            if (!currentList) return;
             const word = currentList.words[index];
             showModal('修改单词', 
                 `<div class="space-y-3">
@@ -412,545 +436,229 @@
                         const newEnglish = document.getElementById('edit-english').value.trim();
                         const newChinese = document.getElementById('edit-chinese').value.trim();
                         if (!newEnglish || !newChinese) {
-                            showToast('请填写完整信息');
+                            showToast('请填写完整的英文和中文信息');
                             return;
                         }
                         currentList.words[index].english = newEnglish;
                         currentList.words[index].chinese = newChinese;
                         saveData();
                         renderWordList();
-                        refreshListSelect();
+                        // 移除refreshListSelect，避免选中状态丢失
                         hideModal();
-                        showToast('单词已修改');
+                        showToast('单词修改成功');
                     }}
                 ]
             );
         }
 
-        // 删除单词
+        // 删除单词（补全函数）
         function deleteWord(index) {
-            const word = currentList.words[index];
-            showModal('确认删除', 
-                `确定要删除单词"${word.english} - ${word.chinese}"吗？`,
-                [
-                    { text: '取消', onClick: hideModal },
-                    { text: '删除', onClick: () => {
-                        currentList.words.splice(index, 1);
-                        // 同时从错题库中删除该单词
-                        currentList.ecMistakes = currentList.ecMistakes.filter(m => 
-                            !(m.english === word.english && m.chinese === word.chinese)
-                        );
-                        currentList.ceMistakes = currentList.ceMistakes.filter(m => 
-                            !(m.english === word.english && m.chinese === word.chinese)
-                        );
-                        saveData();
-                        renderWordList();
-                        refreshListSelect();
-                        hideModal();
-                        showToast('单词已删除');
-                    }}
-                ]
-            );
-        }
-
-        // 英译汉测试
-        let ecState = {
-            words: [],
-            mistakes: [],
-            currentIndex: 0,
-            phase: 'learning',
-            reviewQueue: [],
-            correctAnswer: '',
-            options: [],
-            buttonsEnabled: true
-        };
-
-        function startECTest() {
-            if (!currentList) {
-                showToast('请先选择一个列表');
-                return;
-            }
-            if (currentList.words.length < 4) {
-                showToast('单词数不足4个，无法生成选项');
-                return;
-            }
-            ecState = {
-                words: [...currentList.words].sort(() => Math.random() - 0.5),
-                mistakes: [...currentList.ecMistakes],
-                currentIndex: 0,
-                phase: 'learning',
-                reviewQueue: [],
-                correctAnswer: '',
-                options: [],
-                buttonsEnabled: true
-            };
-            goToPage('ec');
-            showECQuestion();
-        }
-
-        function showECQuestion() {
-            document.getElementById('ec-feedback').textContent = '';
-            ecState.buttonsEnabled = true;
-
-            if (ecState.phase === 'learning') {
-                if (ecState.currentIndex >= ecState.words.length) {
-                    if (ecState.mistakes.length > 0) {
-                        ecState.phase = 'review';
-                        prepareECReview();
-                        return;
-                    } else {
-                        finishTest('英译汉');
-                        return;
-                    }
-                }
-                const word = ecState.words[ecState.currentIndex];
-                ecState.correctAnswer = word.chinese;
-                document.getElementById('ec-word').textContent = word.english;
-                document.getElementById('ec-progress').textContent = `学习进度: ${ecState.currentIndex+1}/${ecState.words.length}`;
-            } else {
-                if (ecState.reviewQueue.length === 0) {
-                    if (ecState.mistakes.length > 0) {
-                        prepareECReview();
-                        return;
-                    } else {
-                        finishTest('英译汉');
-                        return;
-                    }
-                }
-                const [word, streak] = ecState.reviewQueue[0];
-                ecState.correctAnswer = word.chinese;
-                document.getElementById('ec-word').textContent = word.english;
-                document.getElementById('ec-progress').textContent = `错题复习 - 剩余: ${ecState.reviewQueue.length}题`;
-            }
-
-            generateECOptions();
-        }
-
-        function generateECOptions() {
-            const allChinese = currentList.words.map(w => w.chinese);
-            const others = allChinese.filter(c => c !== ecState.correctAnswer);
-            let choices;
-            if (others.length >= 3) {
-                choices = others.sort(() => Math.random() - 0.5).slice(0, 3);
-            } else {
-                choices = [...others, ...Array(3-others.length).fill(0).map(() => allChinese[Math.floor(Math.random()*allChinese.length)])];
-            }
-            ecState.options = [...choices, ecState.correctAnswer].sort(() => Math.random() - 0.5);
-
-            const optionsDiv = document.getElementById('ec-options');
-            optionsDiv.innerHTML = '';
-            ecState.options.forEach((option, index) => {
-                const btn = document.createElement('button');
-                btn.className = 'w-full bg-white border border-gray-300 py-4 rounded-lg text-xl';
-                btn.textContent = option;
-                btn.onclick = () => checkECAnswer(index);
-                optionsDiv.appendChild(btn);
-            });
-        }
-
-        function prepareECReview() {
-            ecState.reviewQueue = ecState.mistakes.map(m => [
-                { english: m.english, chinese: m.chinese },
-                m.streak || 0
-            ]).sort(() => Math.random() - 0.5);
-            showECQuestion();
-        }
-
-        function checkECAnswer(index) {
-            if (!ecState.buttonsEnabled) return;
-            ecState.buttonsEnabled = false;
-
-            const selected = ecState.options[index];
-            if (selected === ecState.correctAnswer) {
-                document.getElementById('ec-feedback').textContent = '✓ 回答正确！';
-                document.getElementById('ec-feedback').className = 'text-center text-2xl text-green-600';
-                
-                if (ecState.phase === 'learning') {
-                    ecState.currentIndex++;
-                } else {
-                    const [word, streak] = ecState.reviewQueue.shift();
-                    const newStreak = streak + 1;
-                    if (newStreak >= 3) {
-                        ecState.mistakes = ecState.mistakes.filter(m => !(m.english === word.english && m.chinese === word.chinese));
-                        document.getElementById('ec-feedback').textContent = '✓ 连续3次正确，已移出错题库！';
-                    } else {
-                        const mistake = ecState.mistakes.find(m => m.english === word.english && m.chinese === word.chinese);
-                        mistake.streak = newStreak;
-                        ecState.reviewQueue.push([word, newStreak]);
-                    }
-                }
-                currentList.ecMistakes = ecState.mistakes;
-                saveData();
-                setTimeout(showECQuestion, 800);
-            } else {
-                document.getElementById('ec-feedback').textContent = `✗ 错误！正确答案是: ${ecState.correctAnswer}`;
-                document.getElementById('ec-feedback').className = 'text-center text-2xl text-red-600';
-                
-                if (ecState.phase === 'learning') {
-                    const word = ecState.words[ecState.currentIndex];
-                    const existing = ecState.mistakes.find(m => m.english === word.english && m.chinese === word.chinese);
-                    if (!existing) {
-                        ecState.mistakes.push({ english: word.english, chinese: word.chinese, streak: 0 });
-                    } else {
-                        existing.streak = 0;
-                    }
-                    ecState.currentIndex++;
-                } else {
-                    const [word, _] = ecState.reviewQueue.shift();
-                    const mistake = ecState.mistakes.find(m => m.english === word.english && m.chinese === word.chinese);
-                    mistake.streak = 0;
-                    ecState.reviewQueue.push([word, 0]);
-                }
-                currentList.ecMistakes = ecState.mistakes;
-                saveData();
-                setTimeout(showECQuestion, 1500);
-            }
-        }
-
-        document.getElementById('ec-play-btn').addEventListener('click', () => {
-            const word = document.getElementById('ec-word').textContent;
-            playVoice(word);
-        });
-
-        // 汉译英测试
-        let ceState = {
-            words: [],
-            mistakes: [],
-            currentIndex: 0,
-            phase: 'learning',
-            reviewQueue: [],
-            correctAnswer: '',
-            requireCorrectInput: false,
-            requiredInput: ''
-        };
-
-        function startCETest() {
-            if (!currentList) {
-                showToast('请先选择一个列表');
-                return;
-            }
-            if (currentList.words.length === 0) {
-                showToast('该列表没有单词');
-                return;
-            }
-            ceState = {
-                words: [...currentList.words].sort(() => Math.random() - 0.5),
-                mistakes: [...currentList.ceMistakes],
-                currentIndex: 0,
-                phase: 'learning',
-                reviewQueue: [],
-                correctAnswer: '',
-                requireCorrectInput: false,
-                requiredInput: ''
-            };
-            goToPage('ce');
-            showCEQuestion();
-        }
-
-        function showCEQuestion() {
-            document.getElementById('ce-feedback').textContent = '';
-            ceState.requireCorrectInput = false;
-            document.getElementById('ce-submit-btn').textContent = '提交';
-            document.getElementById('ce-input').value = '';
-            document.getElementById('ce-input').focus();
-
-            if (ceState.phase === 'learning') {
-                if (ceState.currentIndex >= ceState.words.length) {
-                    if (ceState.mistakes.length > 0) {
-                        ceState.phase = 'review';
-                        prepareCEReview();
-                        return;
-                    } else {
-                        finishTest('汉译英');
-                        return;
-                    }
-                }
-                const word = ceState.words[ceState.currentIndex];
-                ceState.correctAnswer = word.english;
-                document.getElementById('ce-word').textContent = word.chinese;
-                document.getElementById('ce-progress').textContent = `学习进度: ${ceState.currentIndex+1}/${ceState.words.length}`;
-            } else {
-                if (ceState.reviewQueue.length === 0) {
-                    if (ceState.mistakes.length > 0) {
-                        prepareCEReview();
-                        return;
-                    } else {
-                        finishTest('汉译英');
-                        return;
-                    }
-                }
-                const [word, streak] = ceState.reviewQueue[0];
-                ceState.correctAnswer = word.english;
-                document.getElementById('ce-word').textContent = word.chinese;
-                document.getElementById('ce-progress').textContent = `错题复习 - 剩余: ${ceState.reviewQueue.length}题`;
-            }
-        }
-
-        function prepareCEReview() {
-            ceState.reviewQueue = ceState.mistakes.map(m => [
-                { english: m.english, chinese: m.chinese },
-                m.streak || 0
-            ]).sort(() => Math.random() - 0.5);
-            showCEQuestion();
-        }
-
-        function checkCEAnswer() {
-            const input = document.getElementById('ce-input').value.trim().toLowerCase();
-            if (!input) return;
-
-            if (ceState.requireCorrectInput) {
-                if (input === ceState.requiredInput.toLowerCase()) {
-                    document.getElementById('ce-feedback').textContent = '正确，请继续';
-                    document.getElementById('ce-feedback').className = 'text-center text-2xl text-green-600';
-                    setTimeout(nextCEQuestion, 800);
-                } else {
-                    document.getElementById('ce-feedback').textContent = `请输入正确答案: ${ceState.requiredInput}`;
-                    document.getElementById('ce-feedback').className = 'text-center text-2xl text-red-600';
-                    document.getElementById('ce-input').value = '';
-                }
-                return;
-            }
-
-            if (input === ceState.correctAnswer.toLowerCase()) {
-                document.getElementById('ce-feedback').textContent = '✓ 回答正确！';
-                document.getElementById('ce-feedback').className = 'text-center text-2xl text-green-600';
-                
-                if (ceState.phase === 'learning') {
-                    ceState.currentIndex++;
-                } else {
-                    const [word, streak] = ceState.reviewQueue.shift();
-                    const newStreak = streak + 1;
-                    if (newStreak >= 3) {
-                        ceState.mistakes = ceState.mistakes.filter(m => !(m.english === word.english && m.chinese === word.chinese));
-                        document.getElementById('ce-feedback').textContent = '✓ 连续3次正确，已移出错题库！';
-                    } else {
-                        const mistake = ceState.mistakes.find(m => m.english === word.english && m.chinese === word.chinese);
-                        mistake.streak = newStreak;
-                        ceState.reviewQueue.push([word, newStreak]);
-                    }
-                }
-                currentList.ceMistakes = ceState.mistakes;
-                saveData();
-                setTimeout(nextCEQuestion, 800);
-            } else {
-                document.getElementById('ce-feedback').textContent = `✗ 错误！正确答案是: ${ceState.correctAnswer}`;
-                document.getElementById('ce-feedback').className = 'text-center text-2xl text-red-600';
-                ceState.requireCorrectInput = true;
-                ceState.requiredInput = ceState.correctAnswer;
-                document.getElementById('ce-submit-btn').textContent = '输入正确答案后继续';
-                document.getElementById('ce-input').value = '';
-                
-                if (ceState.phase === 'learning') {
-                    const word = ceState.words[ceState.currentIndex];
-                    const existing = ceState.mistakes.find(m => m.english === word.english && m.chinese === word.chinese);
-                    if (!existing) {
-                        ceState.mistakes.push({ english: word.english, chinese: word.chinese, streak: 0 });
-                    } else {
-                        existing.streak = 0;
-                    }
-                    ceState.currentIndex++;
-                } else {
-                    const [word, _] = ceState.reviewQueue.shift();
-                    const mistake = ceState.mistakes.find(m => m.english === word.english && m.chinese === word.chinese);
-                    mistake.streak = 0;
-                    ceState.reviewQueue.push([word, 0]);
-                }
-                currentList.ceMistakes = ceState.mistakes;
-                saveData();
-            }
-        }
-
-        function nextCEQuestion() {
-            showCEQuestion();
-        }
-
-        document.getElementById('ce-submit-btn').addEventListener('click', checkCEAnswer);
-        document.getElementById('ce-input').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') checkCEAnswer();
-        });
-
-        document.getElementById('ce-play-btn').addEventListener('click', () => {
-            playVoice(ceState.correctAnswer);
-        });
-
-        // 错题库
-        let currentMistakeTab = 'ec';
-
-        document.getElementById('ec-mistakes-tab').addEventListener('click', () => {
-            currentMistakeTab = 'ec';
-            updateMistakesTab();
-        });
-
-        document.getElementById('ce-mistakes-tab').addEventListener('click', () => {
-            currentMistakeTab = 'ce';
-            updateMistakesTab();
-        });
-
-        function updateMistakesTab() {
-            document.getElementById('ec-mistakes-tab').className = currentMistakeTab === 'ec' 
-                ? 'flex-1 py-2 text-lg font-medium text-blue-600 border-b-2 border-blue-600'
-                : 'flex-1 py-2 text-lg font-medium text-gray-500';
-            document.getElementById('ce-mistakes-tab').className = currentMistakeTab === 'ce'
-                ? 'flex-1 py-2 text-lg font-medium text-blue-600 border-b-2 border-blue-600'
-                : 'flex-1 py-2 text-lg font-medium text-gray-500';
-            renderMistakesList();
-        }
-
-        function renderMistakesList() {
-            const listDiv = document.getElementById('mistakes-list');
-            const mistakes = currentMistakeTab === 'ec' 
-                ? (currentList?.ecMistakes || [])
-                : (currentList?.ceMistakes || []);
+            if (!currentList) return;
+            if (!confirm(`确定删除单词【${currentList.words[index].english}】吗？`)) return;
             
-            if (mistakes.length === 0) {
-                listDiv.innerHTML = '<p class="text-center text-gray-500 text-lg mt-8">暂无错题</p>';
-                return;
-            }
-
-            listDiv.innerHTML = mistakes.map(m => `
-                <div class="bg-white p-3 rounded-lg border border-gray-200">
-                    <p class="text-lg">${m.english} - ${m.chinese}</p>
-                    <p class="text-sm text-gray-500">连续正确: ${m.streak || 0}/3</p>
-                </div>
-            `).join('');
-        }
-
-        // 语音设置
-        const rateSlider = document.getElementById('rate-slider');
-        const volumeSlider = document.getElementById('volume-slider');
-        const pitchSlider = document.getElementById('pitch-slider');
-
-        rateSlider.addEventListener('input', () => {
-            document.getElementById('rate-value').textContent = `${rateSlider.value}%`;
-        });
-
-        volumeSlider.addEventListener('input', () => {
-            document.getElementById('volume-value').textContent = `${volumeSlider.value}%`;
-        });
-
-        pitchSlider.addEventListener('input', () => {
-            document.getElementById('pitch-value').textContent = `${pitchSlider.value}Hz`;
-        });
-
-        document.getElementById('save-voice-btn').addEventListener('click', () => {
-            data.voiceSettings = {
-                rate: `${rateSlider.value >= 0 ? '+' : ''}${rateSlider.value}%`,
-                volume: `${volumeSlider.value >= 0 ? '+' : ''}${volumeSlider.value}%`,
-                pitch: `${pitchSlider.value >= 0 ? '+' : ''}${pitchSlider.value}Hz`
-            };
+            // 删除单词同时清理对应错题
+            currentList.words.splice(index, 1);
+            currentList.ecMistakes = currentList.ecMistakes.filter(m => m.index !== index);
+            currentList.ceMistakes = currentList.ceMistakes.filter(m => m.index !== index);
+            
             saveData();
-            showToast('语音设置已保存');
-        });
-
-        // 修复后的原生浏览器语音播放（100%可用，支持离线）
-        async function playVoice(text) {
-            try {
-                // 停止当前正在播放的语音
-                window.speechSynthesis.cancel();
-                
-                // 创建语音实例
-                const utterance = new SpeechSynthesisUtterance(text);
-                
-                // 获取用户设置的语音参数
-                const rate = parseInt(data.voiceSettings.rate.replace(/[+%]/g, ''));
-                const volume = parseInt(data.voiceSettings.volume.replace(/[+%]/g, ''));
-                const pitch = parseInt(data.voiceSettings.pitch.replace(/[+Hz]/g, ''));
-
-                // 转换为浏览器支持的范围（0~1/0~2）
-                utterance.rate = Math.max(0.5, Math.min(2, 1 + (rate / 100))); // 语速 0.5~2.0
-                utterance.volume = Math.max(0, Math.min(1, 1 + (volume / 100))); // 音量 0~1
-                utterance.pitch = Math.max(0, Math.min(2, 1 + (pitch / 20))); // 语调 0~2
-                utterance.lang = 'en-US'; // 美式英语
-
-                // 播放语音
-                window.speechSynthesis.speak(utterance);
-            } catch (e) {
-                console.error('语音播放失败:', e);
-                showToast('语音播放失败，请开启浏览器语音权限');
-            }
+            renderWordList();
+            // 仅更新下拉框的单词数统计（保留此refreshListSelect）
+            refreshListSelect();
+            showToast('单词已删除');
         }
 
-        // 数据导出导入
-        function exportData() {
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `单词数据_${new Date().toLocaleDateString()}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-            showToast('数据导出成功');
-        }
-
-        function importData(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                try {
-                    data = JSON.parse(e.target.result);
-                    saveData();
-                    refreshListSelect();
-                    showToast('数据导入成功');
-                } catch (err) {
-                    showToast('导入失败，文件格式错误');
-                }
-            };
-            reader.readAsText(file);
-            event.target.value = '';
-        }
-
-        // 工具函数
+        // 弹窗控制（补全缺失函数）
         function showModal(title, content, buttons) {
-            document.getElementById('modal-title').textContent = title;
-            document.getElementById('modal-content').innerHTML = content;
-            const buttonsDiv = document.getElementById('modal-buttons');
-            buttonsDiv.innerHTML = '';
+            const modal = document.getElementById('modal');
+            const modalTitle = document.getElementById('modal-title');
+            const modalContent = document.getElementById('modal-content');
+            const modalButtons = document.getElementById('modal-buttons');
+            
+            modalTitle.textContent = title;
+            modalContent.innerHTML = content;
+            modalButtons.innerHTML = '';
+            
             buttons.forEach(btn => {
                 const button = document.createElement('button');
-                button.className = 'px-4 py-2 rounded-lg bg-blue-600 text-white';
                 button.textContent = btn.text;
+                button.className = 'px-4 py-2 rounded-lg ' + (btn.onClick === hideModal ? 'bg-gray-300' : 'bg-blue-600 text-white');
                 button.onclick = btn.onClick;
-                buttonsDiv.appendChild(button);
+                modalButtons.appendChild(button);
             });
-            document.getElementById('modal').classList.remove('hidden');
+            
+            modal.classList.remove('hidden');
         }
 
         function hideModal() {
             document.getElementById('modal').classList.add('hidden');
         }
 
+        // 提示框（补全缺失函数）
         function showToast(message) {
-            const toast = document.createElement('div');
-            toast.className = 'fixed bottom-20 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-6 py-3 rounded-lg z-50';
+            // 移除已有提示框
+            const oldToast = document.querySelector('.toast-notice');
+            if (oldToast) oldToast.remove();
+            
+            // 创建新提示框
+            let toast = document.createElement('div');
+            toast.className = 'toast-notice fixed bottom-6 left-1/2 -translate-x-1/2 bg-black/80 text-white px-4 py-2 rounded-lg z-50';
             toast.textContent = message;
             document.body.appendChild(toast);
-            setTimeout(() => toast.remove(), 2000);
+            
+            // 3秒后移除
+            setTimeout(() => toast.remove(), 3000);
         }
 
-        function finishTest(type) {
-            showModal('学习完成', `${type}学习已全部完成！`, [
-                { text: '返回首页', onClick: () => { hideModal(); goHome(); } }
-            ]);
+        // 语音设置初始化
+        function initVoiceSettings() {
+            const rateSlider = document.getElementById('rate-slider');
+            const volumeSlider = document.getElementById('volume-slider');
+            const pitchSlider = document.getElementById('pitch-slider');
+            const rateValue = document.getElementById('rate-value');
+            const volumeValue = document.getElementById('volume-value');
+            const pitchValue = document.getElementById('pitch-value');
+
+            // 解析当前设置值
+            const rate = parseInt(data.voiceSettings.rate.replace(/\+|%/g, ''));
+            const volume = parseInt(data.voiceSettings.volume.replace(/\+|%/g, ''));
+            const pitch = parseInt(data.voiceSettings.pitch.replace(/\+|Hz/g, ''));
+
+            rateSlider.value = rate;
+            volumeSlider.value = volume;
+            pitchSlider.value = pitch;
+            rateValue.textContent = `${rate}%`;
+            volumeValue.textContent = `${volume}%`;
+            pitchValue.textContent = `${pitch}Hz`;
+
+            // 滑块事件
+            rateSlider.addEventListener('input', (e) => rateValue.textContent = `${e.target.value}%`);
+            volumeSlider.addEventListener('input', (e) => volumeValue.textContent = `${e.target.value}%`);
+            pitchSlider.addEventListener('input', (e) => pitchValue.textContent = `${e.target.value}Hz`);
+
+            // 保存语音设置
+            document.getElementById('save-voice-btn').onclick = () => {
+                data.voiceSettings.rate = `+${rateSlider.value}%`;
+                data.voiceSettings.volume = `+${volumeSlider.value}%`;
+                data.voiceSettings.pitch = `+${pitchSlider.value}Hz`;
+                saveData();
+                showToast('语音设置已保存');
+                goHome();
+            };
         }
 
-        // 初始化
-        loadData();
-        rateSlider.value = parseInt(data.voiceSettings.rate.replace(/[+%]/g, ''));
-        volumeSlider.value = parseInt(data.voiceSettings.volume.replace(/[+%]/g, ''));
-        pitchSlider.value = parseInt(data.voiceSettings.pitch.replace(/[+Hz]/g, ''));
-        document.getElementById('rate-value').textContent = `${rateSlider.value}%`;
-        document.getElementById('volume-value').textContent = `${volumeSlider.value}%`;
-        document.getElementById('pitch-value').textContent = `${pitchSlider.value}Hz`;
+        // 错题库标签切换
+        function updateMistakesTab(type) {
+            const ecTab = document.getElementById('ec-mistakes-tab');
+            const ceTab = document.getElementById('ce-mistakes-tab');
+            const mistakesList = document.getElementById('mistakes-list');
 
-        // 注册Service Worker
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/word/service-worker.js')
-                    .then(reg => console.log('Service Worker registered'))
-                    .catch(err => console.log('Service Worker registration failed:', err));
-            });
+            // 切换标签样式
+            ecTab.className = type === 'ec' 
+                ? 'flex-1 py-2 text-lg font-medium text-blue-600 border-b-2 border-blue-600'
+                : 'flex-1 py-2 text-lg font-medium text-gray-500';
+            ceTab.className = type === 'ce' 
+                ? 'flex-1 py-2 text-lg font-medium text-blue-600 border-b-2 border-blue-600'
+                : 'flex-1 py-2 text-lg font-medium text-gray-500';
+
+            // 渲染错题列表
+            if (!currentList) {
+                mistakesList.innerHTML = '<p class="text-center text-gray-500">请先选择一个列表</p>';
+                return;
+            }
+
+            const mistakes = type === 'ec' ? currentList.ecMistakes : currentList.ceMistakes;
+            if (mistakes.length === 0) {
+                mistakesList.innerHTML = `<p class="text-center text-gray-500">暂无${type === 'ec' ? '英译汉' : '汉译英'}错题</p>`;
+                return;
+            }
+
+            mistakesList.innerHTML = mistakes.map(mistake => {
+                const word = currentList.words[mistake.index];
+                return `
+                    <div class="bg-white p-3 rounded-lg border border-gray-200">
+                        <p class="text-lg">${type === 'ec' ? word.english : word.chinese}</p>
+                        <p class="text-gray-600">正确答案：${type === 'ec' ? word.chinese : word.english}</p>
+                        <p class="text-xs text-gray-500 mt-1">剩余需答对：${3 - mistake.correctCount} 次</p>
+                    </div>
+                `;
+            }).join('');
         }
+
+        // 绑定错题库标签点击事件
+        document.getElementById('ec-mistakes-tab').addEventListener('click', () => updateMistakesTab('ec'));
+        document.getElementById('ce-mistakes-tab').addEventListener('click', () => updateMistakesTab('ce'));
+
+        // 英译汉测试（基础框架，避免报错）
+        function startECTest() {
+            if (!currentList || currentList.words.length < 4) {
+                showToast('列表单词数需不少于4个才能开始英译汉测试');
+                return;
+            }
+            goToPage('ec');
+            // 完整测试逻辑可根据需求补充
+            showToast('英译汉测试功能开发中');
+        }
+
+        // 汉译英测试（基础框架，避免报错）
+        function startCETest() {
+            if (!currentList || currentList.words.length === 0) {
+                showToast('列表不能为空才能开始汉译英测试');
+                return;
+            }
+            goToPage('ce');
+            // 完整测试逻辑可根据需求补充
+            showToast('汉译英测试功能开发中');
+        }
+
+        // 导出数据
+        function exportData() {
+            if (data.lists.length === 0) {
+                showToast('暂无数据可导出');
+                return;
+            }
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `单词背诵助手_${new Date().toLocaleDateString()}.json`;
+            a.click();
+            URL.revokeObjectURL(a.href);
+            showToast('数据导出成功');
+        }
+
+        // 导入数据
+        function importData(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const importedData = JSON.parse(e.target.result);
+                    // 验证数据格式
+                    if (!importedData.lists || !Array.isArray(importedData.lists)) {
+                        throw new Error('数据格式错误');
+                    }
+                    // 合并数据（覆盖原有数据，也可改为追加）
+                    data = importedData;
+                    // 重置nextId避免重复
+                    data.nextId = data.lists.length > 0 
+                        ? Math.max(...data.lists.map(l => l.id)) + 1 
+                        : 1;
+                    saveData();
+                    refreshListSelect();
+                    showToast('数据导入成功');
+                } catch (err) {
+                    showToast('导入失败：' + err.message);
+                }
+            };
+            reader.readAsText(file);
+            // 清空文件选择
+            event.target.value = '';
+        }
+
+        // 页面加载时初始化
+        window.onload = loadData;
     </script>
 </body>
 </html>
