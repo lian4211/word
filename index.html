@@ -170,6 +170,7 @@
     </div>
 
     <script>
+        // ==================== 数据管理 ====================
         let data = {
             lists: [],
             nextId: 1,
@@ -187,7 +188,8 @@
             localStorage.setItem('wordLearnerData', JSON.stringify(data));
         }
 
-        // 修复：保留之前选中的列表
+        // ==================== 列表管理 ====================
+        // 修复：刷新列表时保留当前选中列表
         function refreshListSelect() {
             const select = document.getElementById('list-select');
             const previousListId = currentList ? currentList.id : null;
@@ -297,7 +299,7 @@
             currentList = data.lists.find(l => l.id === parseInt(e.target.value));
         });
 
-        // 页面切换
+        // ==================== 页面切换 ====================
         function goToPage(pageName) {
             document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
             document.getElementById(`${pageName}-page`).classList.remove('hidden');
@@ -334,7 +336,7 @@
                 : '请先选择一个列表';
         }
 
-        // 添加单词
+        // ==================== 添加单词 ====================
         document.getElementById('add-word-btn').addEventListener('click', () => {
             const english = document.getElementById('english-input').value.trim();
             const chinese = document.getElementById('chinese-input').value.trim();
@@ -349,7 +351,7 @@
             showToast('单词添加成功');
         });
 
-        // 单词列表管理
+        // ==================== 单词列表管理 ====================
         function renderWordList() {
             const container = document.getElementById('word-list-container');
             const countEl = document.getElementById('word-list-count');
@@ -410,17 +412,410 @@
             );
         }
 
-        // 英译汉（略，未改动）
-        let ecState = { words: [], mistakes: [], currentIndex: 0, phase: 'learning', reviewQueue: [], correctAnswer: '', options: [], buttonsEnabled: true };
-        // ... 以下为完整英译汉逻辑，因篇幅省略，实际使用中已包含，此处保留完整功能但不再全部粘贴，以避免回答过长。
-        // （与前版修复后代码完全一致）
+        // ==================== 英译汉测试 ====================
+        let ecState = {
+            words: [],
+            mistakes: [],
+            currentIndex: 0,
+            phase: 'learning',
+            reviewQueue: [],
+            correctAnswer: '',
+            options: [],
+            buttonsEnabled: true
+        };
 
-        // 汉译英（略，未改动）
-        // 错题库（略，未改动）
-        // 语音设置（略，未改动）
-        // 语音播放（已修复为 Web Speech API，略）
+        function startECTest() {
+            if (!currentList) { showToast('请先选择一个列表'); return; }
+            if (currentList.words.length < 4) { showToast('单词数不足4个，无法生成选项'); return; }
+            ecState = {
+                words: [...currentList.words].sort(() => Math.random() - 0.5),
+                mistakes: [...currentList.ecMistakes],
+                currentIndex: 0,
+                phase: 'learning',
+                reviewQueue: [],
+                correctAnswer: '',
+                options: [],
+                buttonsEnabled: true
+            };
+            goToPage('ec');
+            showECQuestion();
+        }
 
-        // 重点：导入合并逻辑
+        function showECQuestion() {
+            document.getElementById('ec-feedback').textContent = '';
+            ecState.buttonsEnabled = true;
+
+            if (ecState.phase === 'learning') {
+                if (ecState.currentIndex >= ecState.words.length) {
+                    if (ecState.mistakes.length > 0) {
+                        ecState.phase = 'review';
+                        prepareECReview();
+                        return;
+                    } else {
+                        finishTest('英译汉');
+                        return;
+                    }
+                }
+                const word = ecState.words[ecState.currentIndex];
+                ecState.correctAnswer = word.chinese;
+                document.getElementById('ec-word').textContent = word.english;
+                document.getElementById('ec-progress').textContent = `学习进度: ${ecState.currentIndex+1}/${ecState.words.length}`;
+            } else {
+                if (ecState.reviewQueue.length === 0) {
+                    if (ecState.mistakes.length > 0) {
+                        prepareECReview();
+                        return;
+                    } else {
+                        finishTest('英译汉');
+                        return;
+                    }
+                }
+                const [word, streak] = ecState.reviewQueue[0];
+                ecState.correctAnswer = word.chinese;
+                document.getElementById('ec-word').textContent = word.english;
+                document.getElementById('ec-progress').textContent = `错题复习 - 剩余: ${ecState.reviewQueue.length}题`;
+            }
+            generateECOptions();
+        }
+
+        function generateECOptions() {
+            const allChinese = currentList.words.map(w => w.chinese);
+            const others = allChinese.filter(c => c !== ecState.correctAnswer);
+            let choices;
+            if (others.length >= 3) {
+                choices = others.sort(() => Math.random() - 0.5).slice(0, 3);
+            } else {
+                choices = [...others, ...Array(3-others.length).fill(0).map(() => allChinese[Math.floor(Math.random()*allChinese.length)])];
+            }
+            ecState.options = [...choices, ecState.correctAnswer].sort(() => Math.random() - 0.5);
+
+            const optionsDiv = document.getElementById('ec-options');
+            optionsDiv.innerHTML = '';
+            ecState.options.forEach((option, index) => {
+                const btn = document.createElement('button');
+                btn.className = 'w-full bg-white border border-gray-300 py-4 rounded-lg text-xl';
+                btn.textContent = option;
+                btn.onclick = () => checkECAnswer(index);
+                optionsDiv.appendChild(btn);
+            });
+        }
+
+        function prepareECReview() {
+            ecState.reviewQueue = ecState.mistakes.map(m => [
+                { english: m.english, chinese: m.chinese },
+                m.streak || 0
+            ]).sort(() => Math.random() - 0.5);
+            showECQuestion();
+        }
+
+        function checkECAnswer(index) {
+            if (!ecState.buttonsEnabled) return;
+            ecState.buttonsEnabled = false;
+
+            const selected = ecState.options[index];
+            if (selected === ecState.correctAnswer) {
+                document.getElementById('ec-feedback').textContent = '✓ 回答正确！';
+                document.getElementById('ec-feedback').className = 'text-center text-2xl text-green-600';
+                
+                if (ecState.phase === 'learning') {
+                    ecState.currentIndex++;
+                } else {
+                    const [word, streak] = ecState.reviewQueue.shift();
+                    const newStreak = streak + 1;
+                    if (newStreak >= 3) {
+                        ecState.mistakes = ecState.mistakes.filter(m => !(m.english === word.english && m.chinese === word.chinese));
+                        document.getElementById('ec-feedback').textContent = '✓ 连续3次正确，已移出错题库！';
+                    } else {
+                        const mistake = ecState.mistakes.find(m => m.english === word.english && m.chinese === word.chinese);
+                        mistake.streak = newStreak;
+                        ecState.reviewQueue.push([word, newStreak]);
+                    }
+                }
+                currentList.ecMistakes = ecState.mistakes;
+                saveData();
+                setTimeout(showECQuestion, 800);
+            } else {
+                document.getElementById('ec-feedback').textContent = `✗ 错误！正确答案是: ${ecState.correctAnswer}`;
+                document.getElementById('ec-feedback').className = 'text-center text-2xl text-red-600';
+                
+                if (ecState.phase === 'learning') {
+                    const word = ecState.words[ecState.currentIndex];
+                    const existing = ecState.mistakes.find(m => m.english === word.english && m.chinese === word.chinese);
+                    if (!existing) {
+                        ecState.mistakes.push({ english: word.english, chinese: word.chinese, streak: 0 });
+                    } else {
+                        existing.streak = 0;
+                    }
+                    ecState.currentIndex++;
+                } else {
+                    const [word, _] = ecState.reviewQueue.shift();
+                    const mistake = ecState.mistakes.find(m => m.english === word.english && m.chinese === word.chinese);
+                    mistake.streak = 0;
+                    ecState.reviewQueue.push([word, 0]);
+                }
+                currentList.ecMistakes = ecState.mistakes;
+                saveData();
+                setTimeout(showECQuestion, 1500);
+            }
+        }
+
+        document.getElementById('ec-play-btn').addEventListener('click', () => {
+            playVoice(document.getElementById('ec-word').textContent);
+        });
+
+        // ==================== 汉译英测试 ====================
+        let ceState = {
+            words: [],
+            mistakes: [],
+            currentIndex: 0,
+            phase: 'learning',
+            reviewQueue: [],
+            correctAnswer: '',
+            requireCorrectInput: false,
+            requiredInput: ''
+        };
+
+        function startCETest() {
+            if (!currentList) { showToast('请先选择一个列表'); return; }
+            if (currentList.words.length === 0) { showToast('该列表没有单词'); return; }
+            ceState = {
+                words: [...currentList.words].sort(() => Math.random() - 0.5),
+                mistakes: [...currentList.ceMistakes],
+                currentIndex: 0,
+                phase: 'learning',
+                reviewQueue: [],
+                correctAnswer: '',
+                requireCorrectInput: false,
+                requiredInput: ''
+            };
+            goToPage('ce');
+            showCEQuestion();
+        }
+
+        function showCEQuestion() {
+            document.getElementById('ce-feedback').textContent = '';
+            ceState.requireCorrectInput = false;
+            document.getElementById('ce-submit-btn').textContent = '提交';
+            document.getElementById('ce-input').value = '';
+            document.getElementById('ce-input').focus();
+
+            if (ceState.phase === 'learning') {
+                if (ceState.currentIndex >= ceState.words.length) {
+                    if (ceState.mistakes.length > 0) {
+                        ceState.phase = 'review';
+                        prepareCEReview();
+                        return;
+                    } else {
+                        finishTest('汉译英');
+                        return;
+                    }
+                }
+                const word = ceState.words[ceState.currentIndex];
+                ceState.correctAnswer = word.english;
+                document.getElementById('ce-word').textContent = word.chinese;
+                document.getElementById('ce-progress').textContent = `学习进度: ${ceState.currentIndex+1}/${ceState.words.length}`;
+            } else {
+                if (ceState.reviewQueue.length === 0) {
+                    if (ceState.mistakes.length > 0) {
+                        prepareCEReview();
+                        return;
+                    } else {
+                        finishTest('汉译英');
+                        return;
+                    }
+                }
+                const [word, streak] = ceState.reviewQueue[0];
+                ceState.correctAnswer = word.english;
+                document.getElementById('ce-word').textContent = word.chinese;
+                document.getElementById('ce-progress').textContent = `错题复习 - 剩余: ${ceState.reviewQueue.length}题`;
+            }
+        }
+
+        function prepareCEReview() {
+            ceState.reviewQueue = ceState.mistakes.map(m => [
+                { english: m.english, chinese: m.chinese },
+                m.streak || 0
+            ]).sort(() => Math.random() - 0.5);
+            showCEQuestion();
+        }
+
+        function checkCEAnswer() {
+            const input = document.getElementById('ce-input').value.trim().toLowerCase();
+            if (!input) return;
+
+            if (ceState.requireCorrectInput) {
+                if (input === ceState.requiredInput.toLowerCase()) {
+                    document.getElementById('ce-feedback').textContent = '正确，请继续';
+                    document.getElementById('ce-feedback').className = 'text-center text-2xl text-green-600';
+                    setTimeout(nextCEQuestion, 800);
+                } else {
+                    document.getElementById('ce-feedback').textContent = `请输入正确答案: ${ceState.requiredInput}`;
+                    document.getElementById('ce-feedback').className = 'text-center text-2xl text-red-600';
+                    document.getElementById('ce-input').value = '';
+                }
+                return;
+            }
+
+            if (input === ceState.correctAnswer.toLowerCase()) {
+                document.getElementById('ce-feedback').textContent = '✓ 回答正确！';
+                document.getElementById('ce-feedback').className = 'text-center text-2xl text-green-600';
+                
+                if (ceState.phase === 'learning') {
+                    ceState.currentIndex++;
+                } else {
+                    const [word, streak] = ceState.reviewQueue.shift();
+                    const newStreak = streak + 1;
+                    if (newStreak >= 3) {
+                        ceState.mistakes = ceState.mistakes.filter(m => !(m.english === word.english && m.chinese === word.chinese));
+                        document.getElementById('ce-feedback').textContent = '✓ 连续3次正确，已移出错题库！';
+                    } else {
+                        const mistake = ceState.mistakes.find(m => m.english === word.english && m.chinese === word.chinese);
+                        mistake.streak = newStreak;
+                        ceState.reviewQueue.push([word, newStreak]);
+                    }
+                }
+                currentList.ceMistakes = ceState.mistakes;
+                saveData();
+                setTimeout(nextCEQuestion, 800);
+            } else {
+                document.getElementById('ce-feedback').textContent = `✗ 错误！正确答案是: ${ceState.correctAnswer}`;
+                document.getElementById('ce-feedback').className = 'text-center text-2xl text-red-600';
+                ceState.requireCorrectInput = true;
+                ceState.requiredInput = ceState.correctAnswer;
+                document.getElementById('ce-submit-btn').textContent = '输入正确答案后继续';
+                document.getElementById('ce-input').value = '';
+                
+                if (ceState.phase === 'learning') {
+                    const word = ceState.words[ceState.currentIndex];
+                    const existing = ceState.mistakes.find(m => m.english === word.english && m.chinese === word.chinese);
+                    if (!existing) {
+                        ceState.mistakes.push({ english: word.english, chinese: word.chinese, streak: 0 });
+                    } else {
+                        existing.streak = 0;
+                    }
+                    ceState.currentIndex++;
+                } else {
+                    const [word, _] = ceState.reviewQueue.shift();
+                    const mistake = ceState.mistakes.find(m => m.english === word.english && m.chinese === word.chinese);
+                    mistake.streak = 0;
+                    ceState.reviewQueue.push([word, 0]);
+                }
+                currentList.ceMistakes = ceState.mistakes;
+                saveData();
+            }
+        }
+
+        function nextCEQuestion() {
+            showCEQuestion();
+        }
+
+        document.getElementById('ce-submit-btn').addEventListener('click', checkCEAnswer);
+        document.getElementById('ce-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') checkCEAnswer();
+        });
+        document.getElementById('ce-play-btn').addEventListener('click', () => {
+            playVoice(ceState.correctAnswer);
+        });
+
+        // ==================== 错题库 ====================
+        let currentMistakeTab = 'ec';
+
+        document.getElementById('ec-mistakes-tab').addEventListener('click', () => {
+            currentMistakeTab = 'ec';
+            updateMistakesTab();
+        });
+        document.getElementById('ce-mistakes-tab').addEventListener('click', () => {
+            currentMistakeTab = 'ce';
+            updateMistakesTab();
+        });
+
+        function updateMistakesTab() {
+            document.getElementById('ec-mistakes-tab').className = currentMistakeTab === 'ec' 
+                ? 'flex-1 py-2 text-lg font-medium text-blue-600 border-b-2 border-blue-600'
+                : 'flex-1 py-2 text-lg font-medium text-gray-500';
+            document.getElementById('ce-mistakes-tab').className = currentMistakeTab === 'ce'
+                ? 'flex-1 py-2 text-lg font-medium text-blue-600 border-b-2 border-blue-600'
+                : 'flex-1 py-2 text-lg font-medium text-gray-500';
+            renderMistakesList();
+        }
+
+        function renderMistakesList() {
+            const listDiv = document.getElementById('mistakes-list');
+            const mistakes = currentMistakeTab === 'ec' 
+                ? (currentList?.ecMistakes || [])
+                : (currentList?.ceMistakes || []);
+            
+            if (mistakes.length === 0) {
+                listDiv.innerHTML = '<p class="text-center text-gray-500 text-lg mt-8">暂无错题</p>';
+                return;
+            }
+            listDiv.innerHTML = mistakes.map(m => `
+                <div class="bg-white p-3 rounded-lg border border-gray-200">
+                    <p class="text-lg">${m.english} - ${m.chinese}</p>
+                    <p class="text-sm text-gray-500">连续正确: ${m.streak || 0}/3</p>
+                </div>
+            `).join('');
+        }
+
+        // ==================== 语音设置 ====================
+        const rateSlider = document.getElementById('rate-slider');
+        const volumeSlider = document.getElementById('volume-slider');
+        const pitchSlider = document.getElementById('pitch-slider');
+
+        rateSlider.addEventListener('input', () => {
+            document.getElementById('rate-value').textContent = `${rateSlider.value}%`;
+        });
+        volumeSlider.addEventListener('input', () => {
+            document.getElementById('volume-value').textContent = `${volumeSlider.value}%`;
+        });
+        pitchSlider.addEventListener('input', () => {
+            document.getElementById('pitch-value').textContent = `${pitchSlider.value}Hz`;
+        });
+
+        document.getElementById('save-voice-btn').addEventListener('click', () => {
+            data.voiceSettings = {
+                rate: `${rateSlider.value >= 0 ? '+' : ''}${rateSlider.value}%`,
+                volume: `${volumeSlider.value >= 0 ? '+' : ''}${volumeSlider.value}%`,
+                pitch: `${pitchSlider.value >= 0 ? '+' : ''}${pitchSlider.value}Hz`
+            };
+            saveData();
+            showToast('语音设置已保存');
+        });
+
+        // ==================== 语音播放（Web Speech API） ====================
+        async function playVoice(text) {
+            try {
+                window.speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(text);
+                const rate = parseInt(data.voiceSettings.rate.replace(/[+%]/g, ''));
+                const volume = parseInt(data.voiceSettings.volume.replace(/[+%]/g, ''));
+                const pitch = parseInt(data.voiceSettings.pitch.replace(/[+Hz]/g, ''));
+
+                utterance.rate = Math.max(0.5, Math.min(2, 1 + (rate / 100)));
+                utterance.volume = Math.max(0, Math.min(1, 1 + (volume / 100)));
+                utterance.pitch = Math.max(0, Math.min(2, 1 + (pitch / 20)));
+                utterance.lang = 'en-US';
+
+                window.speechSynthesis.speak(utterance);
+            } catch (e) {
+                console.error('语音播放失败:', e);
+                showToast('语音播放失败，请开启浏览器语音权限');
+            }
+        }
+
+        // ==================== 数据导出导入 ====================
+        function exportData() {
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `单词数据_${new Date().toLocaleDateString()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast('数据导出成功');
+        }
+
+        // 导入合并逻辑：同名列表合并单词和错题（去重），新列表直接加入，保持语音设置不变
         function importData(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -432,13 +827,13 @@
                         imported.lists.forEach(importedList => {
                             const existingList = data.lists.find(l => l.name === importedList.name);
                             if (existingList) {
-                                // 合并单词去重
+                                // 合并单词（去重）
                                 importedList.words.forEach(word => {
                                     if (!existingList.words.some(w => w.english === word.english && w.chinese === word.chinese)) {
                                         existingList.words.push(word);
                                     }
                                 });
-                                // 合并错题
+                                // 合并英译汉错题
                                 if (importedList.ecMistakes) {
                                     importedList.ecMistakes.forEach(m => {
                                         if (!existingList.ecMistakes.some(x => x.english === m.english && x.chinese === m.chinese)) {
@@ -446,6 +841,7 @@
                                         }
                                     });
                                 }
+                                // 合并汉译英错题
                                 if (importedList.ceMistakes) {
                                     importedList.ceMistakes.forEach(m => {
                                         if (!existingList.ceMistakes.some(x => x.english === m.english && x.chinese === m.chinese)) {
@@ -454,13 +850,13 @@
                                     });
                                 }
                             } else {
-                                // 新增列表，确保 id 不冲突
+                                // 新增列表，分配新ID避免冲突
                                 const newList = { ...importedList, id: data.nextId++ };
                                 data.lists.push(newList);
                             }
                         });
                     }
-                    // 语音设置保留原有，不覆盖
+                    // 语音设置不覆盖
                     saveData();
                     refreshListSelect();
                     showToast('数据导入成功（已自动合并同名列表）');
@@ -472,16 +868,55 @@
             event.target.value = '';
         }
 
-        // 导出、弹窗、Toast 等辅助函数（略，与之前版本相同）
-        // ...
+        // ==================== 弹窗和提示 ====================
+        function showModal(title, content, buttons) {
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-content').innerHTML = content;
+            const buttonsDiv = document.getElementById('modal-buttons');
+            buttonsDiv.innerHTML = '';
+            buttons.forEach(btn => {
+                const button = document.createElement('button');
+                button.className = 'px-4 py-2 rounded-lg bg-blue-600 text-white';
+                button.textContent = btn.text;
+                button.onclick = btn.onClick;
+                buttonsDiv.appendChild(button);
+            });
+            document.getElementById('modal').classList.remove('hidden');
+        }
 
-        // 初始化
+        function hideModal() {
+            document.getElementById('modal').classList.add('hidden');
+        }
+
+        function showToast(message) {
+            const toast = document.createElement('div');
+            toast.className = 'fixed bottom-20 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-6 py-3 rounded-lg z-50';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+        }
+
+        function finishTest(type) {
+            showModal('学习完成', `${type}学习已全部完成！`, [
+                { text: '返回首页', onClick: () => { hideModal(); goHome(); } }
+            ]);
+        }
+
+        // ==================== 初始化 ====================
         loadData();
-        // 语音滑块初始化（略）
+        rateSlider.value = parseInt(data.voiceSettings.rate.replace(/[+%]/g, ''));
+        volumeSlider.value = parseInt(data.voiceSettings.volume.replace(/[+%]/g, ''));
+        pitchSlider.value = parseInt(data.voiceSettings.pitch.replace(/[+Hz]/g, ''));
+        document.getElementById('rate-value').textContent = `${rateSlider.value}%`;
+        document.getElementById('volume-value').textContent = `${volumeSlider.value}%`;
+        document.getElementById('pitch-value').textContent = `${pitchSlider.value}Hz`;
+
         // 注册 Service Worker
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/word/service-worker.js');
+                navigator.serviceWorker.register('/word/service-worker.js')
+                    .then(reg => console.log('Service Worker registered'))
+                    .catch(err => console.log('Service Worker registration failed:', err));
             });
         }
     </script>
